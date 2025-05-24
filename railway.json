@@ -1,4 +1,8 @@
 {
-  "build": "pip install -r requirements.txt",
-  "start": "python playlistbot.py"
+  "build": {
+    "command": "pip install -r requirements.txt"
+  },
+  "start": {
+    "command": "python main.py"
+  }
 }
