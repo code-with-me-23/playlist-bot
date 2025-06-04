@@ -20,10 +20,34 @@ def sanitize_filename(name: str) -> str:
 # Store active chats
 active_chats = set()
 
+async def safe_send_audio(chat_id, audio, **kwargs):
+    while True:
+        try:
+            return await app.send_audio(chat_id, audio, **kwargs)
+        except FloodWait as e:
+            print(f"FloodWait detected. Waiting for {e.x} seconds...")
+            await asyncio.sleep(e.x)
+
+async def safe_edit_message(message, text, **kwargs):
+    while True:
+        try:
+            return await message.edit_text(text, **kwargs)
+        except FloodWait as e:
+            print(f"FloodWait detected. Waiting for {e.x} seconds...")
+            await asyncio.sleep(e.x)
+
+async def safe_reply_text(message, text, **kwargs):
+    while True:
+        try:
+            return await message.reply_text(text, **kwargs)
+        except FloodWait as e:
+            print(f"FloodWait detected. Waiting for {e.x} seconds...")
+            await asyncio.sleep(e.x)
+
 @app.on_message(filters.command("start"))
 async def start(_, message):
     active_chats.add(message.chat.id)
-    await message.reply_text(
+    await safe_reply_text(message,
         "🎶 **YouTube Playlist Downloader Bot**\n\n"
         "इस बोट की मदद से आप YouTube से गाने डाउनलोड कर सकते हैं।\n\n"
         "command का उपयोग करें:\n\n"
@@ -38,7 +62,7 @@ async def start(_, message):
 @app.on_message(filters.command("stop"))
 async def stop(_, message):
     active_chats.discard(message.chat.id)
-    await message.reply_text("🛑 बोट इस चैट में बंद कर दिया गया है। `/start` भेजें दोबारा चालू करने के लिए।")
+    await safe_reply_text(message, "🛑 बोट इस चैट में बंद कर दिया गया है। `/start` भेजें दोबारा चालू करने के लिए।")
 
 user_searches = {}
 
@@ -60,7 +84,8 @@ async def ask_user_choice(_, message: Message):
         ]
     ]
 
-    await message.reply_text(
+    await safe_reply_text(
+        message,
         f"आपने भेजा: **{user_input}**\n\n"
         "अब चुनें कि आपको किस तरह का रिज़ल्ट चाहिए:",
         reply_markup=InlineKeyboardMarkup(buttons)
@@ -80,7 +105,7 @@ async def handle_choice(_, query: CallbackQuery):
         return
 
     await query.answer()  # remove loading state
-    await query.message.edit_text("🔎 YouTube पर सर्च कर रहा हूँ, कृपया प्रतीक्षा करें...<br> कृपया 5 मिनट (min) रुकिए।")
+    await safe_edit_message(query.message, "🔎 YouTube पर सर्च कर रहा हूँ, कृपया प्रतीक्षा करें...\n कृपया 5 मिनट (min) रुकिए।")
 
     try:
         if user_input.startswith("http") and ("youtube.com" in user_input or "youtu.be" in user_input):
@@ -97,7 +122,7 @@ async def handle_choice(_, query: CallbackQuery):
                 search_url = f"ytsearch1:{user_input} ringtone"
                 pick_best = False
             else:
-                await query.message.edit_text("❌ Invalid option.")
+                await safe_edit_message(query.message, "❌ Invalid option.")
                 return
 
             ydl_opts_search = {"quiet": True, "skip_download": True}
@@ -105,7 +130,7 @@ async def handle_choice(_, query: CallbackQuery):
                 result = ydl.extract_info(search_url, download=False)
 
             if "entries" not in result or not result["entries"]:
-                await query.message.edit_text("❌ कोई रिज़ल्ट नहीं मिला।")
+                await safe_edit_message(query.message, "❌ कोई रिज़ल्ट नहीं मिला।")
                 return
 
             info = max(result["entries"], key=lambda e: e.get("view_count", 0)) if pick_best else result["entries"][0]
@@ -121,25 +146,13 @@ async def handle_choice(_, query: CallbackQuery):
         local_file = download_dir / f"{title}.mp3"
 
         if local_file.exists():
-            try:
-                await app.send_audio(
-                    chat_id=query.message.chat.id,
-                    audio=str(local_file),
-                    title=title,
-                    caption=f"🎧 Already in library: {title}"
-                )
-                await query.message.edit_text("✅ गाना पहले से मौजूद था, भेज दिया गया।")
-            except FloodWait as e:
-                await query.message.edit_text(f"⚠️ Flood wait: कृपया {e.x} सेकंड इंतजार करें।")
-                await asyncio.sleep(e.x)
-                # Retry sending after wait
-                await app.send_audio(
-                    chat_id=query.message.chat.id,
-                    audio=str(local_file),
-                    title=title,
-                    caption=f"🎧 Already in library: {title}"
-                )
-                await query.message.edit_text("✅ गाना भेज दिया गया!")
+            await safe_send_audio(
+                chat_id=query.message.chat.id,
+                audio=str(local_file),
+                title=title,
+                caption=f"🎧 Already in library: {title}"
+            )
+            await safe_edit_message(query.message, "✅ गाना पहले से मौजूद था, भेज दिया गया।")
             return
 
         ydl_opts = {
@@ -153,7 +166,7 @@ async def handle_choice(_, query: CallbackQuery):
             }],
         }
 
-        await query.message.edit_text(f"🎶 '{title}' को डाउनलोड किया जा रहा है.. <br> कृपया 5 मिनट (min) रुकिए।")
+        await safe_edit_message(query.message, f"🎶 '{title}' को डाउनलोड किया जा रहा है.. \n कृपया 5 मिनट (min) रुकिए।")
 
         start_time = time.time()
         with YoutubeDL(ydl_opts) as ydl:
@@ -163,29 +176,18 @@ async def handle_choice(_, query: CallbackQuery):
         duration = time.time() - start_time
 
         if mp3_file.exists():
-            try:
-                await app.send_audio(
-                    chat_id=query.message.chat.id,
-                    audio=str(mp3_file),
-                    title=title,
-                    caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
-                )
-                await query.message.edit_text("✅ गाना भेज दिया गया!")
-            except FloodWait as e:
-                await query.message.edit_text(f"⚠️ Flood wait: कृपया {e.x} सेकंड इंतजार करें।")
-                await asyncio.sleep(e.x)
-                await app.send_audio(
-                    chat_id=query.message.chat.id,
-                    audio=str(mp3_file),
-                    title=title,
-                    caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
-                )
-                await query.message.edit_text("✅ गाना भेज दिया गया!")
+            await safe_send_audio(
+                chat_id=query.message.chat.id,
+                audio=str(mp3_file),
+                title=title,
+                caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
+            )
+            await safe_edit_message(query.message, "✅ गाना भेज दिया गया!")
         else:
-            await query.message.edit_text("⚠️ गाना डाउनलोड नहीं हो पाया।")
+            await safe_edit_message(query.message, "⚠️ गाना डाउनलोड नहीं हो पाया।")
 
     except Exception as e:
-        await query.message.edit_text(f"❌ Error: {e}")
+        await safe_edit_message(query.message, f"❌ Error: {e}")
 
 print("🚀 Bot is running...")
 app.run()
