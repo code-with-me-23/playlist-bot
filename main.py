@@ -6,6 +6,7 @@ from pathlib import Path
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 from yt_dlp import YoutubeDL
+from pyrogram.errors import FloodWait
 
 API_ID = 18100193
 API_HASH = "a27360d3fcef230d33af8e8c4c4c7de6"
@@ -110,7 +111,6 @@ async def handle_choice(_, query: CallbackQuery):
             info = max(result["entries"], key=lambda e: e.get("view_count", 0)) if pick_best else result["entries"][0]
             url = info["webpage_url"]
 
-        # 🔽 Get info for actual title and prepare filename
         ydl_opts_info = {"quiet": True, "skip_download": True}
         with YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -120,18 +120,28 @@ async def handle_choice(_, query: CallbackQuery):
         download_dir.mkdir(parents=True, exist_ok=True)
         local_file = download_dir / f"{title}.mp3"
 
-        # ✅ Check if file already exists
         if local_file.exists():
-            await app.send_audio(
-                chat_id=query.message.chat.id,
-                audio=str(local_file),
-                title=title,
-                caption=f"🎧 Already in library: {title}"
-            )
-            await query.message.edit_text("✅ गाना पहले से मौजूद था, भेज दिया गया।")
-            return  # No need to download again
+            try:
+                await app.send_audio(
+                    chat_id=query.message.chat.id,
+                    audio=str(local_file),
+                    title=title,
+                    caption=f"🎧 Already in library: {title}"
+                )
+                await query.message.edit_text("✅ गाना पहले से मौजूद था, भेज दिया गया।")
+            except FloodWait as e:
+                await query.message.edit_text(f"⚠️ Flood wait: कृपया {e.x} सेकंड इंतजार करें।")
+                await asyncio.sleep(e.x)
+                # Retry sending after wait
+                await app.send_audio(
+                    chat_id=query.message.chat.id,
+                    audio=str(local_file),
+                    title=title,
+                    caption=f"🎧 Already in library: {title}"
+                )
+                await query.message.edit_text("✅ गाना भेज दिया गया!")
+            return
 
-        # 🔽 Proceed to download from YouTube
         ydl_opts = {
             "format": "bestaudio/best",
             "outtmpl": str(download_dir / f"{title}.%(ext)s"),
@@ -153,13 +163,24 @@ async def handle_choice(_, query: CallbackQuery):
         duration = time.time() - start_time
 
         if mp3_file.exists():
-            await app.send_audio(
-                chat_id=query.message.chat.id,
-                audio=str(mp3_file),
-                title=title,
-                caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
-            )
-            await query.message.edit_text("✅ गाना भेज दिया गया!")
+            try:
+                await app.send_audio(
+                    chat_id=query.message.chat.id,
+                    audio=str(mp3_file),
+                    title=title,
+                    caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
+                )
+                await query.message.edit_text("✅ गाना भेज दिया गया!")
+            except FloodWait as e:
+                await query.message.edit_text(f"⚠️ Flood wait: कृपया {e.x} सेकंड इंतजार करें।")
+                await asyncio.sleep(e.x)
+                await app.send_audio(
+                    chat_id=query.message.chat.id,
+                    audio=str(mp3_file),
+                    title=title,
+                    caption=f"✅ Downloaded in {duration:.1f} sec\n\n🎧 Now Playing: {title}"
+                )
+                await query.message.edit_text("✅ गाना भेज दिया गया!")
         else:
             await query.message.edit_text("⚠️ गाना डाउनलोड नहीं हो पाया।")
 
